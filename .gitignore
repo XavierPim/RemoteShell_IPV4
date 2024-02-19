@@ -343,7 +343,12 @@ flycheck_*.el
 /check-env.sh
 /generate-cmakelists.sh
 /generate-flags.sh
-/.clang-format
+build.sh
+build-all.sh
+check-compilers.sh
+check-env.sh
+generate-flags.sh
+generate-cmakelists.sh
 # Mongo Explorer plugin
 
 # File-based project format
