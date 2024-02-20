@@ -1,8 +1,20 @@
-//
-// Created by xavi on 2/18/24.
-//
+#ifndef CLIENT_H
+#define CLIENT_H
 
-#ifndef SERVER_CLIENT_H
-#define SERVER_CLIENT_H
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-#endif    // SERVER_CLIENT_H
+#define TENNER 10
+#define BUFFER_SIZE 1024
+
+void start_client(const char *address, uint16_t port);
+
+#endif /* CLIENT_H */
