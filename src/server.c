@@ -69,116 +69,97 @@ void start_server(const char *address, uint16_t port)
 {
     int                server_socket;
     int                client_socket;
-    int                epoll_fd;
-    struct epoll_event event;
-    struct epoll_event events[EPOLL_MAX_EVENTS];
-
-    // Set up the signal handler for SIGINT
-    setup_signal_handler();
+    fd_set             readfds;
+    struct sockaddr_in client_addr;
 
     server_socket = create_server_socket(address, port);
     printf("Server listening on %s:%d\n", address, port);
 
-    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-    if(epoll_fd == -1)
-    {
-        perror("epoll_create1 failed");
-        close(server_socket);
-        exit(EXIT_FAILURE);
-    }
-
-    event.events  = EPOLLIN;
-    event.data.fd = server_socket;
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event) == -1)
-    {
-        perror("epoll_ctl failed");
-        close(server_socket);
-        close(epoll_fd);
-        exit(EXIT_FAILURE);
-    }
-
     while(!exit_flag)
     {
-        int num_events = epoll_wait(epoll_fd, events, EPOLL_MAX_EVENTS, -1);
-        if(num_events == -1)
-        {
-            perror("epoll_wait failed");
-            close(server_socket);
-            close(epoll_fd);
-            exit(EXIT_FAILURE);    //    struct sockaddr_in client_addr;
-        }
+        int       activity;
+        int       max_sd = server_socket;
+        pthread_t tid;
 
-        for(int i = 0; i < num_events; ++i)
-        {
-            struct sockaddr_in client_addr;
-            socklen_t          client_len;
-            pthread_t          tid;
-            client_len = sizeof(client_addr);
-            memset(&client_addr, 0, client_len);    // Initialize the entire struct to zero
-            client_addr.sin_family = AF_INET;       // Set the address family
+        FD_ZERO(&readfds);
+        FD_SET(server_socket, &readfds);
 
-            if(events[i].data.fd == server_socket)
+        for(int i = 0; i < MAX_CLIENTS; ++i)
+        {
+            if(clients[i] > 0)
             {
-                struct ClientInfo *client_info;
-                int                client_index;
-                client_socket = accept_client(server_socket, &client_addr);
-                if(client_socket == -1)
+                FD_SET(clients[i], &readfds);
+                if(clients[i] > max_sd)
                 {
-                    continue;
-                }
-
-                printf("New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
-                client_index = -1;
-                for(int j = 0; j < MAX_CLIENTS; ++j)
-                {
-                    if(clients[j] == 0)
-                    {
-                        client_index = j;
-                        clients[j]   = client_socket;
-                        break;
-                    }
-                }
-
-                if(client_index == -1)
-                {
-                    fprintf(stderr, "Too many clients. Connection rejected.\n");
-                    close(client_socket);
-                    continue;
-                }
-
-                client_info = (struct ClientInfo *)malloc(sizeof(struct ClientInfo));
-                if(client_info == NULL)
-                {
-                    perror("Memory allocation failed");
-                    close(client_socket);
-                    continue;
-                }
-
-                client_info->client_socket = client_socket;
-                client_info->client_index  = client_index;
-                memcpy(client_info->clients, clients, sizeof(clients));
-
-                if(pthread_create(&tid, NULL, handle_client, (void *)client_info) != 0)
-                {
-                    perror("Thread creation failed");
-                    close(client_socket);
-                    free(client_info);
-                    continue;
-                }
-
-                pthread_detach(tid);
-
-                event.events  = EPOLLIN;
-                event.data.fd = client_socket;
-                if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event) == -1)
-                {
-                    perror("epoll_ctl failed");
-                    close(client_socket);
-                    continue;
+                    max_sd = clients[i];
                 }
             }
-            else
+        }
+
+        activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
+        if(activity < 0 && !exit_flag)
+        {
+            perror("select failed");
+            break;
+        }
+
+        if(FD_ISSET(server_socket, &readfds))
+        {
+            struct ClientInfo *client_info;
+            int                client_index;
+            client_socket = accept_client(server_socket, &client_addr);
+            if(client_socket == -1)
+            {
+                continue;
+            }
+
+            printf("New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+            client_index = -1;
+            for(int j = 0; j < MAX_CLIENTS; ++j)
+            {
+                if(clients[j] == 0)
+                {
+                    client_index = j;
+                    clients[j]   = client_socket;
+                    break;
+                }
+            }
+
+            if(client_index == -1)
+            {
+                fprintf(stderr, "Too many clients. Connection rejected.\n");
+                close(client_socket);
+                continue;
+            }
+
+            client_info = (struct ClientInfo *)malloc(sizeof(struct ClientInfo));
+            if(client_info == NULL)
+            {
+                perror("Memory allocation failed");
+                close(client_socket);
+                continue;
+            }
+
+            client_info->client_socket = client_socket;
+            client_info->client_index  = client_index;
+            // Initialize the rest of the client_info fields as needed
+
+            if(pthread_create(&tid, NULL, handle_client, (void *)client_info) != 0)
+            {
+                perror("Thread creation failed");
+                close(client_socket);
+                free(client_info);
+                continue;
+            }
+
+            pthread_detach(tid);
+        }
+
+        // Handle data from clients
+        for(int i = 0; i < MAX_CLIENTS; ++i)
+        {
+            if(clients[i] > 0 && FD_ISSET(clients[i], &readfds))
             {
                 // Handle data from client
             }
@@ -194,18 +175,17 @@ void start_server(const char *address, uint16_t port)
         }
     }
 
-    // Close the server socket and epoll file descriptor
+    // Close the server socket
     close(server_socket);
-    close(epoll_fd);
 
     printf("Server shutdown complete.\n");
-    // No need for exit(EXIT_SUCCESS) or exit(EXIT_FAILURE) here
 }
 
 int main(int argc, const char *argv[])
 {
     char *endptr;
     long  port;
+
     if(argc != 3)
     {
         fprintf(stderr, "Usage: %s <address> <port>\n", argv[0]);
