@@ -17,14 +17,13 @@
 
 #define MAX_CLIENTS 10
 #define TENNER 10
-#define EPOLL_MAX_EVENTS 10
+#define SIXTYFO 64
 #define BUFFER_SIZE 1024
 
 struct ClientInfo
 {
     int client_socket;
     int client_index;
-    int clients[MAX_CLIENTS];
 };
 
 void  start_server(const char *address, uint16_t port);
@@ -32,5 +31,5 @@ void *handle_client(void *arg);
 void  setup_signal_handler(void);
 int   create_server_socket(const char *address, uint16_t port);
 int   accept_client(int server_socket, struct sockaddr_in *client_addr);
-
+void  forker(char *command);
 #endif /* SERVER_H */

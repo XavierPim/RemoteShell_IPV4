@@ -1,4 +1,5 @@
 #include "../include/server.h"
+#include <wait.h>
 
 // Global array to keep track of client sockets
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
@@ -41,25 +42,25 @@ void *handle_client(void *arg)
 {
     struct ClientInfo *client_info   = (struct ClientInfo *)arg;
     int                client_socket = client_info->client_socket;
-    int                client_index  = client_info->client_index;
     char               buffer[BUFFER_SIZE];
 
     while(1)
     {
-        ssize_t bytes_received;
-        bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        ssize_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
         if(bytes_received <= 0)
         {
-            printf("Client %d disconnected.\n", client_index);
+            printf("Client %d disconnected.\n", client_info->client_index);
             break;
         }
         buffer[bytes_received] = '\0';
-        printf("Received from Client %d: %s", client_index, buffer);
-        send(client_socket, buffer, (size_t)bytes_received, 0);
+        printf("Received command from Client %d: %s\n", client_info->client_index, buffer);
+
+        // Pass the received command to forker
+        forker(buffer);
     }
 
     close(client_socket);
-    clients[client_index] = 0;
+    clients[client_info->client_index] = 0;
     free(client_info);
     return NULL;
 }
@@ -141,9 +142,9 @@ void start_server(const char *address, uint16_t port)
                 continue;
             }
 
+            // Initialize the client_info structure
             client_info->client_socket = client_socket;
             client_info->client_index  = client_index;
-            // Initialize the rest of the client_info fields as needed
 
             if(pthread_create(&tid, NULL, handle_client, (void *)client_info) != 0)
             {
@@ -154,15 +155,6 @@ void start_server(const char *address, uint16_t port)
             }
 
             pthread_detach(tid);
-        }
-
-        // Handle data from clients
-        for(int i = 0; i < MAX_CLIENTS; ++i)
-        {
-            if(clients[i] > 0 && FD_ISSET(clients[i], &readfds))
-            {
-                // Handle data from client
-            }
         }
     }
 
@@ -256,4 +248,80 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
     }
 
     return client_socket;
+}
+
+void forker(char *command)
+{
+    char  *token;
+    char  *saveptr;    // For strtok_r
+    char **commandArgs;
+    int    arg_count;
+    pid_t  child_pid;
+
+    commandArgs = (char **)malloc(sizeof(char *) * SIXTYFO);
+    if(commandArgs == NULL)
+    {
+        perror("malloc");
+        exit(1);
+    }
+    arg_count = 0;
+
+    // Split the command and following options into tokens using strtok_r.
+    token = strtok_r(command, " ", &saveptr);
+    while(token != NULL)
+    {
+        commandArgs[arg_count] = strdup(token);
+        if(commandArgs[arg_count] == NULL)
+        {
+            perror("strdup");
+            // Free previously allocated memory before exiting
+            for(int i = 0; i < arg_count; i++)
+            {
+                free(commandArgs[i]);
+            }
+            free(commandArgs);
+            exit(1);
+        }
+        arg_count++;
+        token = strtok_r(NULL, " ", &saveptr);
+    }
+    commandArgs[arg_count] = NULL;    // Null-terminate the array.
+
+    // Attempt to find and execute the program in the child process.
+    child_pid = fork();
+
+    if(child_pid == -1)
+    {
+        perror("fork");
+        // Free allocated memory before exiting
+        for(int i = 0; i < arg_count; i++)
+        {
+            free(commandArgs[i]);
+        }
+        free(commandArgs);
+        exit(1);
+    }
+    else if(child_pid == 0)
+    {
+        // Child process begins
+        // Execute the command
+        //        execvp(commandArgs[0], commandArgs);
+        printf("Received command from forker %s\n", command);
+
+        // If execvp returns, it must have failed.
+        perror("execvp");
+        _exit(1);    // Use _exit in child to prevent flushing stdio buffers
+    }
+    else
+    {
+        // Parent process begins here
+        wait(NULL);    // Wait for the child process to finish.
+
+        // Free allocated memory in the parent process
+        for(int i = 0; i < arg_count; i++)
+        {
+            free(commandArgs[i]);
+        }
+        free(commandArgs);
+    }
 }
