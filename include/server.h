@@ -31,5 +31,5 @@ void *handle_client(void *arg);
 void  setup_signal_handler(void);
 int   create_server_socket(const char *address, uint16_t port);
 int   accept_client(int server_socket, struct sockaddr_in *client_addr);
-void  forker(char *command);
+void  executor(char *command);
 #endif /* SERVER_H */
