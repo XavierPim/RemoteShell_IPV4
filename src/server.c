@@ -42,47 +42,36 @@ void *handle_client(void *arg)
 {
     struct ClientInfo *client_info   = (struct ClientInfo *)arg;
     int                client_socket = client_info->client_socket;
+    char               buffer[BUFFER_SIZE];
 
-    pid_t pid = fork();
-    if(pid == -1)
+    while(1)
     {
-        perror("fork failed");
-        close(client_socket);
-        clients[client_info->client_index] = 0;
-        free(client_info);
-        return NULL;
-    }
-    if(pid == 0)
-    {
-        // Child process
-        while(1)
+        // Send a response back to the client if needed
+        const char *response       = "Command executed.\n";
+        ssize_t     bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        if(bytes_received <= 0)
         {
-            char    buffer[BUFFER_SIZE];
-            ssize_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-            if(bytes_received <= 0)
-            {
-                printf("Client %d disconnected.\n", client_info->client_index);
-                break;
-            }
-            buffer[bytes_received] = '\0';
-            printf("Received command from Client %d: %s\n", client_info->client_index, buffer);
-
-            // Execute the command
-            executor(buffer);
+            printf("Client %d disconnected.\n", client_info->client_index);
+            break;
         }
+        buffer[bytes_received] = '\0';
+        // Trim the newline character if present
+        if(buffer[bytes_received - 1] == '\n')
+        {
+            buffer[bytes_received - 1] = '\0';
+        }
+        printf("Received command from Client %d: %s\n", client_info->client_index, buffer);
 
-        close(client_socket);
-        exit(0);    // Terminate the child process
+        // Execute the command
+        executor(buffer);
+
+        send(client_socket, response, strlen(response), 0);
     }
-    else
-    {
-        // Parent process
-        close(client_socket);    // Close the client socket in the parent process
-        clients[client_info->client_index] = 0;
-        free(client_info);
-        wait(NULL);    // Optionally wait for the child process to finish
-        return NULL;
-    }
+
+    close(client_socket);
+    clients[client_info->client_index] = 0;
+    free(client_info);
+    return NULL;
 }
 
 // Function to start the server
@@ -226,11 +215,20 @@ int create_server_socket(const char *address, uint16_t port)
 {
     int                server_socket;
     struct sockaddr_in server_addr;
+    int                optval = 1;    // Option value for SO_REUSEADDR
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(server_socket == -1)
     {
         perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set the SO_REUSEADDR socket option
+    if(setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1)
+    {
+        perror("setsockopt failed");
+        close(server_socket);
         exit(EXIT_FAILURE);
     }
 
@@ -245,7 +243,7 @@ int create_server_socket(const char *address, uint16_t port)
         exit(EXIT_FAILURE);
     }
 
-    if(listen(server_socket, MAX_CLIENTS) == -1)
+    if(listen(server_socket, SOMAXCONN) == -1)
     {
         perror("Listen failed");
         close(server_socket);
@@ -273,7 +271,7 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
 void executor(char *command)
 {
     char  *token;
-    char  *saveptr;    // For strtok_r
+    char  *saveptr;
     char **commandArgs;
     int    arg_count;
 
@@ -306,11 +304,17 @@ void executor(char *command)
     }
     commandArgs[arg_count] = NULL;    // Null-terminate the array.
 
-    // Execute the command
+    // Check if commandArgs[0] is not NULL before calling execvp
+    if(commandArgs[0] != NULL)
+    {
+        printf("commandArgs in executor %s\n", commandArgs[0]);
         execvp(commandArgs[0], commandArgs);
-    printf("commandArgs in executor %s\n", commandArgs[0]);
-    // If execvp returns, it must have failed.
-        perror("execvp");
+        perror("execvp");    // If execvp returns, it must have failed.
+    }
+    else
+    {
+        fprintf(stderr, "No command provided.\n");
+    }
 
     // Free allocated memory
     for(int i = 0; i < arg_count; i++)
