@@ -284,6 +284,7 @@ void executor(char *command)
     arg_count = 0;
 
     // Split the command and following options into tokens using strtok_r.
+    //This is the command
     token = strtok_r(command, " ", &saveptr);
     while(token != NULL)
     {
