@@ -1,4 +1,5 @@
 #include "../include/server.h"
+#include <linux/limits.h>
 #include <wait.h>
 
 // Global array to keep track of client sockets
@@ -46,9 +47,8 @@ void *handle_client(void *arg)
 
     while(1)
     {
-        // Send a response back to the client if needed
-        const char *response       = "Command executed.\n";
-        ssize_t     bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        pid_t   pid;
+        ssize_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
         if(bytes_received <= 0)
         {
             printf("Client %d disconnected.\n", client_info->client_index);
@@ -62,10 +62,22 @@ void *handle_client(void *arg)
         }
         printf("Received command from Client %d: %s\n", client_info->client_index, buffer);
 
-        // Execute the command
-        executor(buffer);
-
-        send(client_socket, response, strlen(response), 0);
+        pid = fork();
+        if(pid == 0)
+        {
+            // Child process
+            executor(client_socket, buffer);
+            exit(0);
+        }
+        else if(pid > 0)
+        {
+            // Parent process
+            wait(NULL);    // Wait for the child process to complete
+        }
+        else
+        {
+            perror("fork failed");
+        }
     }
 
     close(client_socket);
@@ -268,11 +280,15 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
     return client_socket;
 }
 
-void executor(char *command)
+noreturn void executor(int client_socket, char *command)
 {
     char  *token;
-    char  *saveptr;
+    char  *saveptr;         // For strtok_r
+    char  *path_saveptr;    // For strtok_r in PATH parsing
     char **commandArgs;
+    char  *path_env;
+    char  *path_copy;
+    char   result_path[PATH_MAX];
     int    arg_count;
 
     commandArgs = (char **)malloc(sizeof(char *) * SIXTYFO);
@@ -284,7 +300,6 @@ void executor(char *command)
     arg_count = 0;
 
     // Split the command and following options into tokens using strtok_r.
-    //This is the command
     token = strtok_r(command, " ", &saveptr);
     while(token != NULL)
     {
@@ -305,17 +320,44 @@ void executor(char *command)
     }
     commandArgs[arg_count] = NULL;    // Null-terminate the array.
 
-    // Check if commandArgs[0] is not NULL before calling execvp
-    if(commandArgs[0] != NULL)
+    // Redirect standard output to the client socket
+    if(dup2(client_socket, STDOUT_FILENO) == -1)
     {
-        printf("commandArgs in executor %s\n", commandArgs[0]);
-        execvp(commandArgs[0], commandArgs);
-        perror("execvp");    // If execvp returns, it must have failed.
+        perror("dup2");
+        _exit(1);
     }
-    else
+
+    // Get the PATH environment variable
+    path_env = getenv("PATH");
+    if(path_env == NULL)
     {
-        fprintf(stderr, "No command provided.\n");
+        fprintf(stderr, "PATH environment variable not found.\n");
+        _exit(1);
     }
+
+    // Make a copy of the PATH variable
+    path_copy = strdup(path_env);
+    if(path_copy == NULL)
+    {
+        perror("strdup");
+        _exit(1);
+    }
+
+    // Search for the executable in the PATH directories
+    token = strtok_r(path_copy, ":", &path_saveptr);
+    while(token != NULL)
+    {
+        snprintf(result_path, sizeof(result_path), "%s/%s", token, commandArgs[0]);
+        if(execv(result_path, commandArgs) != -1)
+        {
+            // Executable found and executed
+            break;
+        }
+        token = strtok_r(NULL, ":", &path_saveptr);
+    }
+
+    // If execv returns, it means execution failed
+    perror("execv");
 
     // Free allocated memory
     for(int i = 0; i < arg_count; i++)
@@ -323,5 +365,6 @@ void executor(char *command)
         free(commandArgs[i]);
     }
     free(commandArgs);
-    //    _exit(1);    // Use _exit in child to prevent flushing stdio buffers
+    free(path_copy);
+    _exit(1);    // Use _exit in child to prevent flushing stdio buffers
 }
