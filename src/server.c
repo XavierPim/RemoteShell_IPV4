@@ -282,14 +282,10 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
 
 noreturn void executor(int client_socket, char *command)
 {
-    char  *token;
-    char  *saveptr;         // For strtok_r
-    char  *path_saveptr;    // For strtok_r in PATH parsing
     char **commandArgs;
-    char  *path_env;
-    char  *path_copy;
-    char   result_path[PATH_MAX];
     int    arg_count;
+    char  *token;
+    char  *saveptr;    // For strtok_r
 
     commandArgs = (char **)malloc(sizeof(char *) * SIXTYFO);
     if(commandArgs == NULL)
@@ -327,37 +323,25 @@ noreturn void executor(int client_socket, char *command)
         _exit(1);
     }
 
-    // Get the PATH environment variable
-    path_env = getenv("PATH");
-    if(path_env == NULL)
+    // Execute the command using execvp to search the PATH
+    if(commandArgs[0] != NULL)
     {
-        fprintf(stderr, "PATH environment variable not found.\n");
-        _exit(1);
-    }
-
-    // Make a copy of the PATH variable
-    path_copy = strdup(path_env);
-    if(path_copy == NULL)
-    {
-        perror("strdup");
-        _exit(1);
-    }
-
-    // Search for the executable in the PATH directories
-    token = strtok_r(path_copy, ":", &path_saveptr);
-    while(token != NULL)
-    {
-        snprintf(result_path, sizeof(result_path), "%s/%s", token, commandArgs[0]);
-        if(execv(result_path, commandArgs) != -1)
+        if(execvp(commandArgs[0], commandArgs) == -1)
         {
-            // Executable found and executed
-            break;
+            // If execvp fails and the command is a local path, try execv
+            if(strchr(commandArgs[0], '/') != NULL)
+            {
+                execv(commandArgs[0], commandArgs);
+            }
         }
-        token = strtok_r(NULL, ":", &path_saveptr);
+    }
+    else
+    {
+        fprintf(stderr, "No command provided.\n");
     }
 
-    // If execv returns, it means execution failed
-    perror("execv");
+    // If execution reaches this point, the command execution has failed
+    perror("execvp/execv");
 
     // Free allocated memory
     for(int i = 0; i < arg_count; i++)
@@ -365,6 +349,5 @@ noreturn void executor(int client_socket, char *command)
         free(commandArgs[i]);
     }
     free(commandArgs);
-    free(path_copy);
     _exit(1);    // Use _exit in child to prevent flushing stdio buffers
 }
