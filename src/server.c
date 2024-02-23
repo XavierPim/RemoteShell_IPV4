@@ -280,74 +280,65 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
     return client_socket;
 }
 
-noreturn void executor(int client_socket, char *command)
-{
-    char **commandArgs;
-    int    arg_count;
-    char  *token;
-    char  *saveptr;    // For strtok_r
+noreturn void executor(int client_socket, char *command) {
+    char *token, *saveptr;
+    char *commandArgs[64];
+    int arg_count = 0;
+    char path[PATH_MAX];
+    struct stat statbuf;
 
-    commandArgs = (char **)malloc(sizeof(char *) * SIXTYFO);
-    if(commandArgs == NULL)
-    {
-        perror("malloc");
-        exit(1);
-    }
-    arg_count = 0;
-
-    // Split the command and following options into tokens using strtok_r.
+    // Allocate and parse command arguments
     token = strtok_r(command, " ", &saveptr);
-    while(token != NULL)
-    {
-        commandArgs[arg_count] = strdup(token);
-        if(commandArgs[arg_count] == NULL)
-        {
-            perror("strdup");
-            // Free previously allocated memory before exiting
-            for(int i = 0; i < arg_count; i++)
-            {
-                free(commandArgs[i]);
-            }
-            free(commandArgs);
-            exit(1);
-        }
-        arg_count++;
+    while (token) {
+        commandArgs[arg_count++] = token;
         token = strtok_r(NULL, " ", &saveptr);
     }
-    commandArgs[arg_count] = NULL;    // Null-terminate the array.
+    commandArgs[arg_count] = NULL; // Null-terminate the array
 
-    // Redirect standard output to the client socket
-    if(dup2(client_socket, STDOUT_FILENO) == -1)
-    {
+    // Redirect standard output and standard error to the client socket
+    if (dup2(client_socket, STDOUT_FILENO) == -1 || dup2(client_socket, STDERR_FILENO) == -1) {
         perror("dup2");
         _exit(1);
     }
 
-    // Execute the command using execvp to search the PATH
-    if(commandArgs[0] != NULL)
-    {
-        if(execvp(commandArgs[0], commandArgs) == -1)
-        {
-            // If execvp fails and the command is a local path, try execv
-            if(strchr(commandArgs[0], '/') != NULL)
-            {
-                execv(commandArgs[0], commandArgs);
+    // Check if commandArgs[0] is not NULL before using it
+    if (commandArgs[0] != NULL) {
+        // Check if command includes a path (either relative or absolute)
+        if (strchr(commandArgs[0], '/')) {
+            // If command is specified with a path, attempt to execute directly
+            execv(commandArgs[0], commandArgs);
+        } else {
+            // If command does not include a path, search in the PATH environment variable
+            char *path_env = getenv("PATH");
+            if (!path_env) {
+                fprintf(stderr, "Failed to get PATH environment variable.\n");
+                _exit(1);
+            }
+
+            char *path_copy = strdup(path_env);
+            if (!path_copy) {
+                perror("strdup");
+                _exit(1);
+            }
+
+            int found = 0;
+            for (char *dir = strtok_r(path_copy, ":", &saveptr); dir && !found; dir = strtok_r(NULL, ":", &saveptr)) {
+                snprintf(path, sizeof(path), "%s/%s", dir, commandArgs[0]);
+                // Check if the file exists and is executable
+                if (stat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && (statbuf.st_mode & S_IXUSR)) {
+                    execv(path, commandArgs); // Execute the command with resolved path
+                    found = 1;
+                }
+            }
+            free(path_copy);
+            if (!found) {
+                fprintf(stderr, "%s: command not found\n", commandArgs[0]);
             }
         }
-    }
-    else
-    {
+    } else {
         fprintf(stderr, "No command provided.\n");
     }
 
-    // If execution reaches this point, the command execution has failed
-    perror("execvp/execv");
-
-    // Free allocated memory
-    for(int i = 0; i < arg_count; i++)
-    {
-        free(commandArgs[i]);
-    }
-    free(commandArgs);
-    _exit(1);    // Use _exit in child to prevent flushing stdio buffers
+    perror("execv"); // execv only returns on error
+    _exit(1); // Exit if execv fails
 }
