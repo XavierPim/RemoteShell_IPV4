@@ -1,7 +1,7 @@
 #include "../include/server.h"
 #include <linux/limits.h>
-#include <wait.h>
 #include <sys/stat.h>
+#include <wait.h>
 
 // Global array to keep track of client sockets
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
@@ -281,67 +281,82 @@ int accept_client(int server_socket, struct sockaddr_in *client_addr)
     return client_socket;
 }
 
-noreturn void executor(int client_socket, char *command) {
-    char *token, *saveptr;
-    char *commandArgs[64];
-    int arg_count = 0;
-    char path[PATH_MAX];
+noreturn void executor(int client_socket, char *command)
+{
+    char       *token;
+    char       *saveptr;
+    char       *commandArgs[SIXTYFO];
+    int         arg_count = 0;
     struct stat statbuf;
 
     // Allocate and parse command arguments
     token = strtok_r(command, " ", &saveptr);
-    while (token) {
+    while(token)
+    {
         commandArgs[arg_count++] = token;
-        token = strtok_r(NULL, " ", &saveptr);
+        token                    = strtok_r(NULL, " ", &saveptr);
     }
-    commandArgs[arg_count] = NULL; // Null-terminate the array
+    commandArgs[arg_count] = NULL;    // Null-terminate the array
 
     // Redirect standard output and standard error to the client socket
-    if (dup2(client_socket, STDOUT_FILENO) == -1 || dup2(client_socket, STDERR_FILENO) == -1) {
+    if(dup2(client_socket, STDOUT_FILENO) == -1 || dup2(client_socket, STDERR_FILENO) == -1)
+    {
         perror("dup2");
         _exit(1);
     }
 
     // Check if commandArgs[0] is not NULL before using it
-    if (commandArgs[0] != NULL) {
-        char *path_copy;
-        int found;
+    if(commandArgs[0] != NULL)
+    {
         // Check if command includes a path (either relative or absolute)
-        if (strchr(commandArgs[0], '/')) {
+        if(strchr(commandArgs[0], '/'))
+        {
             // If command is specified with a path, attempt to execute directly
             execv(commandArgs[0], commandArgs);
-        } else {
+        }
+        else
+        {
+            int   found;
+            char  path[PATH_MAX];
+            char *path_copy;
             // If command does not include a path, search in the PATH environment variable
             char *path_env = getenv("PATH");
-            if (!path_env) {
+            if(!path_env)
+            {
                 fprintf(stderr, "Failed to get PATH environment variable.\n");
                 _exit(1);
             }
 
-            path_copy= strdup(path_env);
-            if (!path_copy) {
+            path_copy = strdup(path_env);
+            if(!path_copy)
+            {
                 perror("strdup");
                 _exit(1);
             }
 
             found = 0;
-            for (char *dir = strtok_r(path_copy, ":", &saveptr); dir && !found; dir = strtok_r(NULL, ":", &saveptr)) {
+            for(char *dir = strtok_r(path_copy, ":", &saveptr); dir && !found; dir = strtok_r(NULL, ":", &saveptr))
+            {
                 snprintf(path, sizeof(path), "%s/%s", dir, commandArgs[0]);
                 // Check if the file exists and is executable
-                if (stat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && (statbuf.st_mode & S_IXUSR)) {
-                    execv(path, commandArgs); // Execute the command with resolved path
+                if(stat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && (statbuf.st_mode & S_IXUSR))
+                {
+                    execv(path, commandArgs);    // Execute the command with resolved path
                     found = 1;
                 }
             }
             free(path_copy);
-            if (!found) {
+            if(!found)
+            {
                 fprintf(stderr, "%s: command not found\n", commandArgs[0]);
             }
         }
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "No command provided.\n");
     }
 
-    perror("execv"); // execv only returns on error
-    _exit(1); // Exit if execv fails
+    perror("execv");    // execv only returns on error
+    _exit(1);           // Exit if execv fails
 }
