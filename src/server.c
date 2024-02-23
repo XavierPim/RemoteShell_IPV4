@@ -1,6 +1,7 @@
 #include "../include/server.h"
 #include <linux/limits.h>
 #include <wait.h>
+#include <sys/stat.h>
 
 // Global array to keep track of client sockets
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
@@ -303,6 +304,8 @@ noreturn void executor(int client_socket, char *command) {
 
     // Check if commandArgs[0] is not NULL before using it
     if (commandArgs[0] != NULL) {
+        char *path_copy;
+        int found;
         // Check if command includes a path (either relative or absolute)
         if (strchr(commandArgs[0], '/')) {
             // If command is specified with a path, attempt to execute directly
@@ -315,13 +318,13 @@ noreturn void executor(int client_socket, char *command) {
                 _exit(1);
             }
 
-            char *path_copy = strdup(path_env);
+            path_copy= strdup(path_env);
             if (!path_copy) {
                 perror("strdup");
                 _exit(1);
             }
 
-            int found = 0;
+            found = 0;
             for (char *dir = strtok_r(path_copy, ":", &saveptr); dir && !found; dir = strtok_r(NULL, ":", &saveptr)) {
                 snprintf(path, sizeof(path), "%s/%s", dir, commandArgs[0]);
                 // Check if the file exists and is executable
