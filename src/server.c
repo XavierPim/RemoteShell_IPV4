@@ -80,8 +80,8 @@ void *handle_client(void *arg)
             perror("fork failed");
         }
     }
-
-    close(client_socket);
+    //JESUS
+    //    close(client_socket);
     clients[client_info->client_index] = 0;
     free(client_info);
     return NULL;
